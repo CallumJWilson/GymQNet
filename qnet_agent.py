@@ -7,47 +7,34 @@
 
 import tensorflow as tf
 import numpy as np
-import random
 import math
 from environment import Environment
-from operator import itemgetter
 import pdb
-import time
 
 class QNetAgent():
-	def __init__(self,agent_config,network_config,env):
+	def __init__(self, agent_config, network_config, env):
 
-		self.alpha=network_config.alpha
-		self.clip_norm=network_config.clip_norm
-		self.update_steps=network_config.update_steps
-		self.timing=network_config.timing
-
-		if isinstance(network_config.N_hid,int):
-			self.N_hid = network_config.N_hid
-		else:
-			self.N_hid = self.action_size
-
-		self.gamma=agent_config.gamma
-		self.eps=agent_config.eps0
-		self.eps0=agent_config.eps0
-		self.epsf=agent_config.epsf
-		self.n_eps=agent_config.n_eps
-		self.minib=agent_config.minib
-		self.max_mem=agent_config.max_mem
+		# network parameters
+		for key in agent_config.keys():
+			setattr(self, key, agent_config[key])
+		for key in network_config.keys():
+			setattr(self, key, network_config[key])
+		self.eps = self.eps0
 
 		self.state_size = env.state_size
 		self.action_size = env.action_size
 
+		# build network
 		self.state_input = tf.placeholder(shape=[1,self.state_size],dtype=tf.float32)
 		self.w_in = tf.Variable(tf.random_uniform([self.state_size,self.N_hid],0,0.1))
 		self.b_in = tf.Variable(tf.random_uniform([1,self.N_hid],0,0))
 		self.W = tf.Variable(tf.random_uniform([self.N_hid,self.action_size],0,0.1))
-
 		act_fn = tf.tanh
 		self.act = act_fn(tf.matmul(self.state_input,tf.add(self.w_in,self.b_in)), name=None)
 		self.Q_est = tf.matmul(self.act,self.W)
-
 		self.nextQ = tf.placeholder(shape=[1,self.action_size],dtype=tf.float32)
+		
+		# update rules
 		loss = tf.reduce_sum(tf.square(self.nextQ - self.Q_est))
 		trainer = tf.train.RMSPropOptimizer(self.alpha)
 		if isinstance(self.clip_norm, float):
@@ -68,15 +55,16 @@ class QNetAgent():
 		self.bt_assign = self.bt.assign(self.b_in)
 		self.Wt_assign = self.Wt.assign(self.W)
 
-		self.sess=tf.Session()
+		# initialise Tensorflow session
+		self.sess = tf.Session()
 		self.sess.run(tf.global_variables_initializer())
 
-		# Memory initialisation
-		self.prev_s=[]
-		self.prev_a=[]
-		self.memory=[]
-		self.step_count=0
-		self.ep_no=0
+		# initialise memory
+		self.prev_s = []
+		self.prev_a = []
+		self.memory = []
+		self.step_count = 0
+		self.ep_no = 0
 
 	def action_select(self,env,state):
 
@@ -91,7 +79,7 @@ class QNetAgent():
 
 	def update_net(self,state,reward,done):
 
-		# Update epsilon
+		# update epsilon
 		if done:
 			state=[]
 			self.ep_no+=1
@@ -100,22 +88,21 @@ class QNetAgent():
 			else:
 				self.eps=self.epsf
 
-		# Update epsilon
-		self.memory.append([self.prev_s,self.prev_a,reward,state])
+		# update memory
+		self.memory.append((self.prev_s,self.prev_a,reward,state))
 		if len(self.memory)>self.max_mem:
 			del self.memory[0]
 
-		# Select data from memory
+		# select data from memory
 		if len(self.memory)>self.minib & self.minib>1:
-			sample_ind=random.sample(range(1,len(self.memory)),self.minib)
+			sample_ind=np.random.choice(range(1,len(self.memory)),self.minib)
 		elif self.minib==1:
 			sample_ind=[len(self.memory)-1]
 		else:
 			sample_ind=range(len(self.memory))
 
-		# Update network using selected data
+		# update network using selected data
 		with self.sess.as_default():
-			t0=time.time()
 			for ind in sample_ind:
 				s=self.memory[ind][0]
 				r=self.memory[ind][2]
@@ -129,14 +116,11 @@ class QNetAgent():
 				s_update=s.reshape(1,-1)
 				q_target=q_s.reshape(1,-1)
 				self.sess.run(self.updateModel,{self.state_input:s_update,self.nextQ:q_target})
-			t1=time.time()
 
-		# Update target network
+		# update target network
 		self.step_count += 1
 		if self.step_count>=self.update_steps:
 			self.sess.run(self.wt_assign)
 			self.sess.run(self.bt_assign)
 			self.sess.run(self.Wt_assign)
 			self.step_count=0
-		if self.timing:
-			return t1-t0
